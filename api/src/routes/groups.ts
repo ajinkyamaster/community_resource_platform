@@ -106,12 +106,10 @@ groupsRouter.post('/:groupId/join-requests', async (req, res, next) => {
     if (mem.rowCount > 0) {
       throw new AppError(400, 'Already a member');
     }
-    // Check pending or approved request
-    const existing = await db.query('select status from group_join_requests where group_id = $1 and user_id = $2', [req.params.groupId, req.user!.userId]);
+    // Check if a request is already pending
+    const existing = await db.query('select 1 from group_join_requests where group_id = $1 and user_id = $2 and status = $3', [req.params.groupId, req.user!.userId, 'pending']);
     if (existing.rowCount > 0) {
-      const st = existing.rows[0].status;
-      if (st === 'pending') throw new AppError(400, 'Join request already pending');
-      if (st === 'approved') throw new AppError(400, 'Join request already approved');
+      throw new AppError(400, 'Join request already pending');
     }
     try {
       const r = await db.query('insert into group_join_requests (group_id, user_id, status) values ($1, $2, $3) returning id, group_id, user_id, status, requested_at', [req.params.groupId, req.user!.userId, 'pending']);

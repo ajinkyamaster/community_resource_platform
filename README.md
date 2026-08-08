@@ -17,9 +17,10 @@ Phase 0/1 baseline for a multi-tenant resource-sharing app.
 
 ## Tenant isolation
 
-- `groups`, `group_members`, and `resources` are protected with Postgres RLS.
+- `groups`, `group_members`, `group_join_requests`, and `resources` are protected with Postgres RLS.
 - The API sets `app.user_id` per request before any tenant-scoped query.
-- RLS is forced on the tenant tables so the owning DB role cannot bypass policy checks.
+- RLS is forced on the tenant tables. To ensure it takes effect, the Express app connects using a dedicated least-privilege role (`app_user`) rather than the `postgres` superuser (which would unconditionally bypass RLS).
+- A separate admin/migration connection string (superuser) is maintained solely for schema migrations. This ensures the runtime app cannot accidentally perform schema changes.
 
 ## Current scope
 

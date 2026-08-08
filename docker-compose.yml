@@ -27,7 +27,8 @@ services:
         condition: service_healthy
     environment:
       PORT: 3001
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-community_resource_db}
+      DATABASE_URL: postgresql://${APP_DB_USER:-app_user}:${APP_DB_PASSWORD:-app_password}@db:5432/${DB_NAME:-community_resource_db}
+      MIGRATION_DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-community_resource_db}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-in-prod}
       JWT_ISSUER: community-resource-platform
       JWT_AUDIENCE: community-resource-web

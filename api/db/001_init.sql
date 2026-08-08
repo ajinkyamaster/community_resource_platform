@@ -1,5 +1,20 @@
 create extension if not exists pgcrypto;
 
+-- -------------------------------
+-- Application Runtime Role
+-- -------------------------------
+-- Explicitly DO NOT grant SUPERUSER or BYPASSRLS (these are defaults for a new role,
+-- but stated here for unambiguous security intent).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'app_user') THEN
+    CREATE ROLE app_user LOGIN PASSWORD 'app_password';
+  END IF;
+END
+$$;
+
+
+
 create table if not exists users (
   id uuid primary key default gen_random_uuid(),
   email text not null,
@@ -66,45 +81,79 @@ as $$
   select nullif(current_setting('app.user_id', true), '')::uuid
 $$;
 
+
+-- -------------------------------
+-- SECURITY DEFINER functions to avoid RLS recursion
+-- 
+-- These functions are created to prevent infinite recursion (42P17) when evaluating RLS 
+-- policies that need to check group_members. By running as SECURITY DEFINER, they 
+-- execute with the privileges of their creator (postgres, a superuser), safely bypassing 
+-- the RLS checks on group_members while checking if a user has a specific role.
+-- -------------------------------
+create or replace function is_group_member(check_group_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1
+    from group_members
+    where group_id = check_group_id
+      and user_id = app_current_user_id()
+  );
+$$;
+
+create or replace function is_group_admin_or_owner(check_group_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1
+    from group_members
+    where group_id = check_group_id
+      and user_id = app_current_user_id()
+      and role in ('owner', 'admin')
+  );
+$$;
+
+revoke execute on function is_group_member(uuid) from public;
+revoke execute on function is_group_admin_or_owner(uuid) from public;
+grant execute on function is_group_member(uuid) to app_user;
+grant execute on function is_group_admin_or_owner(uuid) to app_user;
+
 alter table groups enable row level security;
 alter table group_members enable row level security;
-alter table group_join_requests enable row level security;
 alter table resources enable row level security;
 
 alter table groups force row level security;
 alter table group_members force row level security;
-alter table group_join_requests force row level security;
 alter table resources force row level security;
 
 drop policy if exists groups_select_member on groups;
 create policy groups_select_member
   on groups for select
-  using (
-    created_by = app_current_user_id()
-    or exists (
-      select 1
-      from group_members gm
-      where gm.group_id = groups.id
-        and gm.user_id = app_current_user_id()
-    )
-  );
+  using (created_by = app_current_user_id() or is_group_member(groups.id));
 
 drop policy if exists groups_insert_creator on groups;
 create policy groups_insert_creator
   on groups for insert
   with check (created_by = app_current_user_id());
 
+drop policy if exists groups_update_owner on groups;
+create policy groups_update_owner
+  on groups for update
+  using (is_group_admin_or_owner(groups.id))
+  with check (is_group_admin_or_owner(groups.id));
+
 drop policy if exists group_members_select_member on group_members;
 create policy group_members_select_member
   on group_members for select
-  using (
-    exists (
-      select 1
-      from group_members gm2
-      where gm2.group_id = group_members.group_id
-        and gm2.user_id = app_current_user_id()
-    )
-  );
+  using (is_group_member(group_members.group_id));
 
 drop policy if exists group_members_insert_self on group_members;
 drop policy if exists group_members_insert_control on group_members;
@@ -115,38 +164,21 @@ create policy group_members_insert_control
     (role = 'owner' and user_id = app_current_user_id())
     -- or allow an existing admin/owner to insert approved members (member or admin)
     or (
-      role in ('member','admin') and exists (
-        select 1 from group_members gm
-        where gm.group_id = group_members.group_id
-          and gm.user_id = app_current_user_id()
-          and gm.role in ('owner','admin')
-      )
+      role in ('member','admin') and is_group_admin_or_owner(group_members.group_id)
     )
   );
 
 drop policy if exists resources_select_member on resources;
 create policy resources_select_member
   on resources for select
-  using (
-    exists (
-      select 1
-      from group_members gm
-      where gm.group_id = resources.group_id
-        and gm.user_id = app_current_user_id()
-    )
-  );
+  using (is_group_member(resources.group_id));
 
 drop policy if exists resources_insert_member on resources;
 create policy resources_insert_member
   on resources for insert
   with check (
     uploaded_by = app_current_user_id()
-    and exists (
-      select 1
-      from group_members gm
-      where gm.group_id = resources.group_id
-        and gm.user_id = app_current_user_id()
-    )
+    and is_group_member(resources.group_id)
   );
 
 drop policy if exists resources_update_owner on resources;
@@ -154,38 +186,18 @@ create policy resources_update_owner
   on resources for update
   using (
     uploaded_by = app_current_user_id()
-    or exists (
-      select 1
-      from group_members gm
-      where gm.group_id = resources.group_id
-        and gm.user_id = app_current_user_id()
-        and gm.role in ('owner', 'admin')
-    )
+    or is_group_admin_or_owner(resources.group_id)
   )
   with check (
     uploaded_by is null
     or uploaded_by = app_current_user_id()
-    or exists (
-      select 1
-      from group_members gm
-      where gm.group_id = resources.group_id
-        and gm.user_id = app_current_user_id()
-        and gm.role in ('owner', 'admin')
-    )
+    or is_group_admin_or_owner(resources.group_id)
   );
 
 drop policy if exists resources_delete_owner on resources;
 create policy resources_delete_owner
   on resources for delete
-  using (
-    exists (
-      select 1
-      from group_members gm
-      where gm.group_id = resources.group_id
-        and gm.user_id = app_current_user_id()
-        and gm.role in ('owner', 'admin')
-    )
-  );
+  using (is_group_admin_or_owner(resources.group_id));
 
 -- -------------------------------
 -- Join requests table + policies
@@ -218,28 +230,14 @@ create policy join_requests_select_admin
   on group_join_requests for select
   using (
     -- admins or owner of the group can view requests
-    exists (
-      select 1
-      from group_members gm
-      where gm.group_id = group_join_requests.group_id
-        and gm.user_id = app_current_user_id()
-        and gm.role in ('owner','admin')
-    )
+    is_group_admin_or_owner(group_join_requests.group_id)
     or user_id = app_current_user_id() -- allow users to see their own requests
   );
 
 drop policy if exists join_requests_update_admin on group_join_requests;
 create policy join_requests_update_admin
   on group_join_requests for update
-  using (
-    exists (
-      select 1
-      from group_members gm
-      where gm.group_id = group_join_requests.group_id
-        and gm.user_id = app_current_user_id()
-        and gm.role in ('owner','admin')
-    )
-  )
+  using (is_group_admin_or_owner(group_join_requests.group_id))
   with check (decided_by = app_current_user_id() and status in ('approved','rejected'));
 
 drop policy if exists group_members_delete_self on group_members;
@@ -250,37 +248,13 @@ create policy group_members_delete_self
 drop policy if exists group_members_delete_admin on group_members;
 create policy group_members_delete_admin
   on group_members for delete
-  using (
-    exists (
-      select 1
-      from group_members gm
-      where gm.group_id = group_members.group_id
-        and gm.user_id = app_current_user_id()
-        and gm.role in ('owner', 'admin')
-    )
-  );
+  using (is_group_admin_or_owner(group_members.group_id));
 
 drop policy if exists group_members_update_admin on group_members;
 create policy group_members_update_admin
   on group_members for update
-  using (
-    exists (
-      select 1
-      from group_members gm
-      where gm.group_id = group_members.group_id
-        and gm.user_id = app_current_user_id()
-        and gm.role in ('owner', 'admin')
-    )
-  )
-  with check (
-    exists (
-      select 1
-      from group_members gm
-      where gm.group_id = group_members.group_id
-        and gm.user_id = app_current_user_id()
-        and gm.role in ('owner', 'admin')
-    )
-  );
+  using (is_group_admin_or_owner(group_members.group_id))
+  with check (is_group_admin_or_owner(group_members.group_id));
 
 -- -------------------------------
 -- Owner protection trigger
@@ -310,3 +284,8 @@ drop trigger if exists prevent_owner_change on group_members;
 create trigger prevent_owner_change
   before update or delete on group_members
   for each row execute function prevent_owner_demote_or_delete();
+
+grant connect on database community_resource_db to app_user;
+grant usage on schema public to app_user;
+grant select, insert, update, delete on users, groups, group_members, group_join_requests, resources to app_user;
+
