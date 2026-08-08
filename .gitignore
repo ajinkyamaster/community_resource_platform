@@ -1,0 +1,73 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build Outputs (Node/Next.js)
+.next/
+out/
+dist/
+build/
+
+# Python Virtual Environments & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+backend/.venv/
+worker/.venv/
+develop-eggs/
+eggs/
+.eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment Variables / Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Testing / Linting Caches
+coverage/
+.nyc_output/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+compose.log
+*.log
+
+# IDEs / Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.project
+.settings/
+
+# OS-specific files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump

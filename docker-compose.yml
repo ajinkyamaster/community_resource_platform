@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-community_resource_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./api/db/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    image: node:22-alpine
+    working_dir: /workspace/api
+    command: sh -lc "npm install && npm run dev"
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 3001
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-community_resource_db}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-in-prod}
+      JWT_ISSUER: community-resource-platform
+      JWT_AUDIENCE: community-resource-web
+      ACCESS_TOKEN_EXPIRE_MINUTES: 10080
+      CORS_ORIGINS: http://localhost:3000,http://frontend:3000
+    volumes:
+      - .:/workspace
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /workspace/frontend
+    command: sh -lc "npm install && npm run dev"
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:3001
+    volumes:
+      - .:/workspace
+
+  worker:
+    image: python:3.11-slim
+    working_dir: /workspace/worker
+    command: sh -lc "python -m worker"
+    volumes:
+      - .:/workspace
+
+volumes:
+  postgres_data:
