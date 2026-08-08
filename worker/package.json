@@ -1,0 +1,8 @@
+{
+  "name": "community-resource-worker",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "start": "python -m worker"
+  }
+}
